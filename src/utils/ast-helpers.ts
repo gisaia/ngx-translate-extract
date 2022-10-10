@@ -7,10 +7,17 @@ import {
 	ConstructorDeclaration,
 	CallExpression,
 	Expression,
-	PropertyAccessExpression
+	PropertyAccessExpression,
+	EnumDeclaration,
+	StringLiteral,
+	SourceFile
 } from 'typescript';
 
 import pkg from 'typescript';
+const { isIdentifier, isPropertyAccessExpression } = pkg;
+import glob from 'glob';
+import fs from 'fs';
+
 const { SyntaxKind, isStringLiteralLike, isArrayLiteralExpression, isBinaryExpression, isConditionalExpression } = pkg;
 
 export function getNamedImports(node: Node, moduleName: string): NamedImports[] {
@@ -90,7 +97,7 @@ export function findFunctionCallExpressions(node: Node, fnName: string | string[
 	if (Array.isArray(fnName)) {
 		fnName = fnName.join('|');
 	}
-	const query = `CallExpression:has(Identifier[name="${fnName}"]):not(:has(PropertyAccessExpression))`;
+	const query = `CallExpression:has(Identifier[name="${fnName}"])`;
 	const nodes = tsquery<CallExpression>(node, query);
 	return nodes;
 }
@@ -104,21 +111,43 @@ export function findPropertyCallExpressions(node: Node, prop: string, fnName: st
 	return nodes;
 }
 
-export function getStringsFromExpression(expression: Expression): string[] {
+export function findEnumDeclaration(node: SourceFile, enumIdentifier: string): EnumDeclaration | null {
+	const queryWhereEnum = `ImportDeclaration:has(ImportSpecifier[text=${enumIdentifier}]) StringLiteral`;
+	const [where] = tsquery<StringLiteral>(node, queryWhereEnum);
+	const query = `EnumDeclaration:has(Identifier[name=${enumIdentifier}])`;
+	if (!where) {
+		const [result] = tsquery<EnumDeclaration>(node, query);
+		return result;
+	} else {
+		const __dirname = process.cwd();
+		const filePath = [where.text, __dirname + '/' + where.text, __dirname + '/' + where.text + '.ts'];
+		for (var path of filePath) {
+			const enumFile = glob.sync(path).filter((filePath) => fs.statSync(filePath).isFile())[0];
+			if (enumFile) {
+				const contents: string = fs.readFileSync(enumFile, 'utf-8');
+				const [result] = tsquery<EnumDeclaration>(contents, query);
+				return result;
+			}
+		}
+		return null;
+	}
+}
+
+export function getStringsFromExpression(expression: Expression, sourceFile: SourceFile): string[] {
 	if (isStringLiteralLike(expression)) {
 		return [expression.text];
 	}
 
 	if (isArrayLiteralExpression(expression)) {
 		return expression.elements.reduce((result: string[], element: Expression) => {
-			const strings = getStringsFromExpression(element);
+			const strings = getStringsFromExpression(element, sourceFile);
 			return [...result, ...strings];
 		}, []);
 	}
 
 	if (isBinaryExpression(expression)) {
-		const [left] = getStringsFromExpression(expression.left);
-		const [right] = getStringsFromExpression(expression.right);
+		const [left] = getStringsFromExpression(expression.left, sourceFile);
+		const [right] = getStringsFromExpression(expression.right, sourceFile);
 
 		if (expression.operatorToken.kind === SyntaxKind.PlusToken) {
 			if (typeof left === 'string' && typeof right === 'string') {
@@ -139,8 +168,8 @@ export function getStringsFromExpression(expression: Expression): string[] {
 	}
 
 	if (isConditionalExpression(expression)) {
-		const [whenTrue] = getStringsFromExpression(expression.whenTrue);
-		const [whenFalse] = getStringsFromExpression(expression.whenFalse);
+		const [whenTrue] = getStringsFromExpression(expression.whenTrue, sourceFile);
+		const [whenFalse] = getStringsFromExpression(expression.whenFalse, sourceFile);
 
 		const result = [];
 		if (typeof whenTrue === 'string') {
@@ -150,6 +179,30 @@ export function getStringsFromExpression(expression: Expression): string[] {
 			result.push(whenFalse);
 		}
 		return result;
+	}
+
+	if (isPropertyAccessExpression(expression)) {
+		var enumMemberName: string;
+		if (isIdentifier(expression.name) && expression.name.escapedText) {
+			enumMemberName = expression.name.escapedText.toString();
+		} else {
+			return [];
+		}
+
+		if (isIdentifier(expression.expression)) {
+			const enumObject = findEnumDeclaration(sourceFile, expression.expression.escapedText.toString());
+			if (!enumObject) {
+				return [];
+			}
+			for (var enumMember of enumObject.members) {
+				if (isIdentifier(enumMember.name) && enumMember.name.escapedText && enumMember.name.escapedText.toString() === enumMemberName) {
+					if (enumMember.initializer && isStringLiteralLike(enumMember.initializer)) {
+						return [enumMember.initializer.text];
+					}
+				}
+			}
+			return [];
+		}
 	}
 	return [];
 }
