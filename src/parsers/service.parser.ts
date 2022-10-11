@@ -38,7 +38,7 @@ export class ServiceParser implements ParserInterface {
 				if (!firstArg) {
 					return;
 				}
-				const strings = getStringsFromExpression(firstArg);
+				const strings = getStringsFromExpression(firstArg, sourceFile);
 				collection = collection.addKeys(strings);
 			});
 		});

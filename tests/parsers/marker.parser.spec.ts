@@ -61,4 +61,28 @@ describe('MarkerParser', () => {
 		const keys = parser.extract(contents, componentFilename).keys();
 		expect(keys).to.deep.equal(['DYNAMIC_TRAD.val1', 'DYNAMIC_TRAD.val2']);
 	});
+
+	it('should extract the value of string enums', () => {
+		const contents = `
+		import { marker } from '@biesbjerg/ngx-translate-extract-marker';
+		import { TEST_ENUM } from './tests/utils/enum';
+
+		export enum DYNAMIC_TRAD {
+			string = 'string',
+			number = 5
+		}
+
+		export class AppModule {
+			constructor() {
+				marker(DYNAMIC_TRAD.string);
+				marker(DYNAMIC_TRAD.number.toString());
+				marker("Extract a " + DYNAMIC_TRAD.string + " value");
+				marker(TEST_ENUM.test);
+				marker(TEST_ENUM.wrong);
+			}
+		}
+		`;
+		const keys = parser.extract(contents, componentFilename).keys();
+		expect(keys).to.deep.equal(['string', 'Extract a string value', 'test']);
+	});
 });
