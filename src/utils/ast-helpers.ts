@@ -10,11 +10,13 @@ import {
 	PropertyAccessExpression,
 	EnumDeclaration,
 	StringLiteral,
-	SourceFile
+	SourceFile,
+	TypeReferenceNode,
+	EnumMember
 } from 'typescript';
 
 import pkg from 'typescript';
-const { isIdentifier, isPropertyAccessExpression } = pkg;
+const { isIdentifier, isPropertyAccessExpression, isMemberName } = pkg;
 import glob from 'glob';
 import fs from 'fs';
 
@@ -146,25 +148,40 @@ export function getStringsFromExpression(expression: Expression, sourceFile: Sou
 	}
 
 	if (isBinaryExpression(expression)) {
-		const [left] = getStringsFromExpression(expression.left, sourceFile);
-		const [right] = getStringsFromExpression(expression.right, sourceFile);
+		const left = getStringsFromExpression(expression.left, sourceFile);
+		const right = getStringsFromExpression(expression.right, sourceFile);
 
-		if (expression.operatorToken.kind === SyntaxKind.PlusToken) {
-			if (typeof left === 'string' && typeof right === 'string') {
-				return [left + right];
-			}
+		if (left.length + right.length === 0) {
+			return [];
 		}
 
 		if (expression.operatorToken.kind === SyntaxKind.BarBarToken) {
-			const result = [];
-			if (typeof left === 'string') {
-				result.push(left);
+			if (left.length === 0) {
+				return right;
 			}
-			if (typeof right === 'string') {
-				result.push(right);
+			if (right.length === 0) {
+				return left;
 			}
-			return result;
 		}
+
+		var results = [];
+		for (var leftValue of left) {
+			for (var rightValue of right) {
+				if (expression.operatorToken.kind === SyntaxKind.PlusToken) {
+					if (typeof leftValue === 'string' && typeof rightValue === 'string') {
+						results.push(leftValue + rightValue);
+					}
+				} else if (expression.operatorToken.kind === SyntaxKind.BarBarToken) {
+					if (typeof leftValue === 'string') {
+						results.push(leftValue);
+					}
+					if (typeof rightValue === 'string') {
+						results.push(rightValue);
+					}
+				}
+			}
+		}
+		return results;
 	}
 
 	if (isConditionalExpression(expression)) {
@@ -202,6 +219,23 @@ export function getStringsFromExpression(expression: Expression, sourceFile: Sou
 				}
 			}
 			return [];
+		}
+	}
+	if (isMemberName(expression)) {
+		const [result] = tsquery<TypeReferenceNode>(sourceFile, `Parameter:has(Identifier[name=${expression.text}]) TypeReference`);
+		if (!!result) {
+			if (isIdentifier(result.typeName)) {
+				const enumObject = findEnumDeclaration(sourceFile, result.typeName.escapedText.toString());
+				if (!enumObject) {
+					return [];
+				}
+				return enumObject.members.reduce((result: string[], member: EnumMember) => {
+					if (member.initializer && isStringLiteralLike(member.initializer)) {
+						return [...result, member.initializer.text];
+					}
+					return result;
+				}, []);
+			}
 		}
 	}
 	return [];
